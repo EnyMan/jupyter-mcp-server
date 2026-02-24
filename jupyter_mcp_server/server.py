@@ -12,7 +12,7 @@ from fastapi import Request
 from jupyter_kernel_client import KernelClient
 
 from mcp.server import FastMCP
-from mcp.types import ImageContent, ToolAnnotations
+from mcp.types import ImageContent, ResourceLink, ToolAnnotations
 from starlette.middleware.cors import CORSMiddleware
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -82,6 +82,21 @@ class FastMCPWithCORS(FastMCP):
 mcp = FastMCPWithCORS(name="Jupyter MCP Server", json_response=False, stateless_http=True)
 notebook_manager = NotebookManager()
 server_context = ServerContext.get_instance()
+
+
+###############################################################################
+# Resources.
+
+@mcp.resource("jupyter://images/{image_id}", mime_type="image/png")
+def get_cell_image(image_id: str) -> bytes:
+    """Serve a cached cell image output by ID."""
+    import base64
+    from jupyter_mcp_server.image_cache import get_image_cache
+    cache = get_image_cache()
+    entry = cache.get(image_id)
+    if entry is None:
+        raise ValueError(f"Image {image_id} not found or expired")
+    return base64.b64decode(entry.data)
 
 def __start_kernel():
     """Start the Jupyter kernel with error handling (for backward compatibility)."""
@@ -442,7 +457,7 @@ async def execute_cell(
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
     stream: Annotated[bool, Field(description="Enable streaming progress (including time indicator) updates for long-running cells")] = False,
     progress_interval: Annotated[int, Field(description="Seconds between progress updates when stream=True")] = 5,
-) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
+) -> Annotated[list[str | ImageContent | ResourceLink], Field(description="List of outputs from the executed cell")]:
     """Execute a cell from the currently activated notebook with timeout and return it's outputs"""
     return await safe_notebook_operation(
         lambda: ExecuteCellTool().execute(
@@ -470,7 +485,7 @@ async def insert_execute_code_cell(
     cell_index: Annotated[int, Field(description="Index of the cell to insert and execute (0-based)", ge=-1)],
     cell_source: Annotated[str, Field(description="Code source for the cell")],
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
-) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
+) -> Annotated[list[str | ImageContent | ResourceLink], Field(description="List of outputs from the executed cell")]:
     """Insert a cell at specified index from the currently activated notebook and then execute it with timeout and return it's outputs
     It is a shortcut tool for insert_cell and execute_cell tools, recommended to use if you want to insert a cell and execute it at the same time"""
     await safe_notebook_operation(
@@ -511,7 +526,7 @@ async def insert_execute_code_cell(
 async def read_cell(
     cell_index: Annotated[int, Field(description="Index of the cell to read (0-based)", ge=0)],
     include_outputs: Annotated[bool, Field(description="Include outputs in the response (only for code cells)")] = True,
-) -> Annotated[list[str | ImageContent], Field(description="Cell information including index, type, source, and outputs (for code cells)")]:
+) -> Annotated[list[str | ImageContent | ResourceLink], Field(description="Cell information including index, type, source, and outputs (for code cells)")]:
     """Read a specific cell from the currently activated notebook and return it's metadata (index, type, execution count), source and outputs (for code cells)"""
     return await safe_notebook_operation(
         lambda: ReadCellTool().execute(
@@ -557,7 +572,7 @@ async def delete_cell(
 async def execute_code(
     code: Annotated[str, Field(description="Code to execute (supports magic commands with %, shell commands with !)")],
     timeout: Annotated[int, Field(description="Execution timeout in seconds",le=60)] = 30,
-) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed code")]:
+) -> Annotated[list[str | ImageContent | ResourceLink], Field(description="List of outputs from the executed code")]:
     """Execute code directly in the kernel (not saved to notebook) on the current activated notebook.
 
     Recommended to use in following cases:

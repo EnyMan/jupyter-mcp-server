@@ -10,7 +10,7 @@ from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
 from jupyter_mcp_server.models import Notebook
 from jupyter_mcp_server.config import get_config
-from mcp.types import ImageContent
+from mcp.types import ImageContent, ResourceLink
 
 
 class ReadCellTool(BaseTool):
@@ -29,7 +29,7 @@ class ReadCellTool(BaseTool):
         cell_index: int = None,
         include_outputs: bool = True,
         **kwargs
-    ) -> list[str | ImageContent]:
+    ) -> list[str | ImageContent | ResourceLink]:
         """Execute the read_cell tool.
         
         Args:

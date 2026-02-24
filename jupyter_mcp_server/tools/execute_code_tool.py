@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Union
 
-from mcp.types import ImageContent
+from mcp.types import ImageContent, ResourceLink
 
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
@@ -26,7 +26,7 @@ class ExecuteCodeTool(BaseTool):
         code: str,
         timeout: int,
         safe_extract_outputs_fn
-    ) -> list[Union[str, ImageContent]]:
+    ) -> list[Union[str, ImageContent, ResourceLink]]:
         """Execute code using kernel_manager (JUPYTER_SERVER mode).
         
         Uses execute_code_local which handles ZMQ message collection properly.
@@ -54,7 +54,7 @@ class ExecuteCodeTool(BaseTool):
         ensure_kernel_alive_fn,
         wait_for_kernel_idle_fn,
         safe_extract_outputs_fn
-    ) -> list[Union[str, ImageContent]]:
+    ) -> list[Union[str, ImageContent, ResourceLink]]:
         """Execute code using notebook_manager (MCP_SERVER mode - original logic)."""
         # Get current notebook name and kernel
         current_notebook = notebook_manager.get_current_notebook() or "default"
@@ -117,7 +117,7 @@ class ExecuteCodeTool(BaseTool):
         wait_for_kernel_idle_fn=None,
         safe_extract_outputs_fn=None,
         **kwargs
-    ) -> list[Union[str, ImageContent]]:
+    ) -> list[Union[str, ImageContent, ResourceLink]]:
         """Execute IPython code directly in the kernel.
         
         Args:

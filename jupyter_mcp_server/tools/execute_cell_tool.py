@@ -10,7 +10,7 @@ import time
 import nbformat
 from pathlib import Path
 from typing import Union, List
-from mcp.types import ImageContent
+from mcp.types import ImageContent, ResourceLink
 
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.utils import (
@@ -24,6 +24,7 @@ from jupyter_mcp_server.utils import (
     execute_cell_with_forced_sync,
     extract_output
 )
+from jupyter_mcp_server.image_cache import get_image_cache
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class ExecuteCellTool(BaseTool):
         self,
         notebook_path: str,
         cell_index: int,
-        outputs: List[Union[str, ImageContent]]
+        outputs: List[Union[str, ImageContent, ResourceLink]]
     ):
         """Write execution outputs back to a notebook cell."""
 
@@ -67,6 +68,18 @@ class ExecuteCellTool(BaseTool):
                     data={output.mimeType: output.data},
                     metadata={}
                 ))
+            elif isinstance(output, ResourceLink):
+                # Resolve ResourceLink back to image data for notebook storage
+                import re as _re
+                match = _re.match(r"jupyter://images/([a-f0-9]+)", str(output.uri))
+                if match:
+                    entry = get_image_cache().get(match.group(1))
+                    if entry:
+                        cell.outputs.append(nbformat.v4.new_output(
+                            output_type='display_data',
+                            data={entry.mime_type: entry.data},
+                            metadata={}
+                        ))
             elif isinstance(output, str):
                 if output.startswith('[ERROR:') or output.startswith('[TIMEOUT ERROR:') or output.startswith('[PROGRESS:'):
                     cell.outputs.append(nbformat.v4.new_output(
@@ -110,7 +123,7 @@ class ExecuteCellTool(BaseTool):
         progress_interval: int = 5,
         ensure_kernel_alive_fn=None,
         **kwargs
-    ) -> List[Union[str, ImageContent]]:
+    ) -> List[Union[str, ImageContent, ResourceLink]]:
         """Execute a cell with configurable timeout and optional streaming progress updates.
 
         Args:
