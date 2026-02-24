@@ -7,9 +7,13 @@ import asyncio
 import time
 import json
 from typing import Any, Union
-from mcp.types import ImageContent
-from jupyter_mcp_server.config import ALLOW_IMG_OUTPUT
+from mcp.types import ImageContent, ResourceLink
+from jupyter_mcp_server.config import ALLOW_IMG_OUTPUT, IMG_OUTPUT_MODE
+from jupyter_mcp_server.image_cache import get_image_cache
 from jupyter_nbmodel_client import NotebookModel
+
+# Type alias for cell output items returned by extract_output / safe_extract_outputs
+CellOutput = Union[str, ImageContent, ResourceLink]
 
 
 def get_current_notebook_context(notebook_manager=None):
@@ -45,7 +49,7 @@ def get_current_notebook_context(notebook_manager=None):
     return notebook_path, kernel_id
 
 
-def extract_output(output: Union[dict, Any]) -> Union[str, ImageContent]:
+def extract_output(output: Union[dict, Any]) -> CellOutput:
     """
     Extracts readable output from a Jupyter cell output dictionary.
     Handles both traditional and CRDT-based Jupyter formats.
@@ -54,7 +58,7 @@ def extract_output(output: Union[dict, Any]) -> Union[str, ImageContent]:
         output: The output from a Jupyter cell (dict or CRDT object).
 
     Returns:
-        str: A string representation of the output.
+        A string, ImageContent, or ResourceLink depending on output type and config.
     """
     # Handle pycrdt._text.Text objects
     if hasattr(output, 'source'):
@@ -90,13 +94,23 @@ def extract_output(output: Union[dict, Any]) -> Union[str, ImageContent]:
         if "image/png" in data:
             if ALLOW_IMG_OUTPUT:
                 try:
-                    return ImageContent(type="image", data=data["image/png"], mimeType="image/png")
+                    if IMG_OUTPUT_MODE == "resource":
+                        cache = get_image_cache()
+                        image_id = cache.store(data["image/png"], mime_type="image/png")
+                        return ResourceLink(
+                            type="resource_link",
+                            name=f"cell-output-{image_id}",
+                            uri=f"jupyter://images/{image_id}",
+                            mimeType="image/png",
+                        )
+                    else:
+                        return ImageContent(type="image", data=data["image/png"], mimeType="image/png")
                 except Exception:
                     # Fallback to text placeholder on error
                     return "[Image Output (PNG) - Error processing image]"
             else:
                 return "[Image Output (PNG) - Image display disabled]"
-            
+
 
         if "text/plain" in data:
             plain_text = data["text/plain"]
@@ -148,15 +162,15 @@ def clean_notebook_outputs(notebook):
                     del output['transient']
 
 
-def safe_extract_outputs(outputs: Any) -> list[Union[str, ImageContent]]:
+def safe_extract_outputs(outputs: Any) -> list[CellOutput]:
     """
     Safely extract all outputs from a cell, handling CRDT structures.
-    
+
     Args:
         outputs: Cell outputs (could be CRDT YArray or traditional list)
-        
+
     Returns:
-        list[Union[str, ImageContent]]: List of outputs (strings or image content)
+        List of outputs (strings, image content, or resource links)
     """
     if not outputs:
         return []
@@ -424,13 +438,13 @@ async def execute_via_execution_stack(
     timeout: int = 300,
     poll_interval: float = 0.1,
     logger = None
-) -> list[Union[str, ImageContent]]:
+) -> list[CellOutput]:
     """Execute code using ExecutionStack (JUPYTER_SERVER mode with jupyter-server-nbmodel).
-    
+
     This uses the ExecutionStack from jupyter-server-nbmodel extension directly,
     avoiding the reentrant HTTP call issue. This is the preferred method for code
     execution in JUPYTER_SERVER mode.
-    
+
     Args:
         serverapp: Jupyter server application instance
         kernel_id: Kernel ID to execute in
@@ -440,9 +454,9 @@ async def execute_via_execution_stack(
         timeout: Maximum time to wait for execution (seconds)
         poll_interval: Time between polling for results (seconds)
         logger: Logger instance (optional)
-        
+
     Returns:
-        List of formatted outputs (strings or ImageContent)
+        List of formatted outputs (strings, ImageContent, or ResourceLink)
         
     Raises:
         RuntimeError: If jupyter-server-nbmodel extension is not installed
@@ -535,16 +549,16 @@ async def execute_code_local(
     kernel_id: str,
     timeout: int = 300,
     logger=None
-) -> list[Union[str, ImageContent]]:
+) -> list[CellOutput]:
     """Execute code in a kernel and return outputs (JUPYTER_SERVER mode).
-    
+
     This is a centralized code execution function for JUPYTER_SERVER mode that:
     1. Gets the kernel from kernel_manager
     2. Creates a client and sends execute_request
     3. Polls for response messages with timeout
     4. Collects and formats outputs
     5. Cleans up resources
-    
+
     Args:
         serverapp: Jupyter ServerApp instance
         notebook_path: Path to the notebook (for context)
@@ -552,9 +566,9 @@ async def execute_code_local(
         kernel_id: ID of the kernel to execute in
         timeout: Timeout in seconds (default: 300)
         logger: Logger instance (optional)
-        
+
     Returns:
-        List of formatted outputs (strings or ImageContent)
+        List of formatted outputs (strings, ImageContent, or ResourceLink)
     """
     import zmq.asyncio
     from inspect import isawaitable
@@ -712,15 +726,15 @@ async def execute_cell_local(
     kernel_id: str,
     timeout: int = 300,
     logger=None
-) -> list[Union[str, ImageContent]]:
+) -> list[CellOutput]:
     """Execute a cell in a notebook and return outputs (JUPYTER_SERVER mode).
-    
+
     This function:
     1. Reads the cell source from the notebook (YDoc or file)
     2. Executes the code using execute_code_local
     3. Writes the outputs back to the notebook (YDoc or file)
     4. Returns the formatted outputs
-    
+
     Args:
         serverapp: Jupyter ServerApp instance
         notebook_path: Path to the notebook
@@ -728,9 +742,9 @@ async def execute_cell_local(
         kernel_id: ID of the kernel to execute in
         timeout: Timeout in seconds (default: 300)
         logger: Logger instance (optional)
-        
+
     Returns:
-        List of formatted outputs (strings or ImageContent)
+        List of formatted outputs (strings, ImageContent, or ResourceLink)
     """
     import nbformat
     
@@ -875,7 +889,17 @@ async def execute_cell_local(
                         output_type='display_data',
                         data={'image/png': output.data}
                     ))
-            
+                elif isinstance(output, ResourceLink):
+                    # Resolve ResourceLink back to image data for notebook storage
+                    match = re.match(r"jupyter://images/([a-f0-9]+)", str(output.uri))
+                    if match:
+                        entry = get_image_cache().get(match.group(1))
+                        if entry:
+                            cell.outputs.append(nbformat.v4.new_output(
+                                output_type='display_data',
+                                data={entry.mime_type: entry.data},
+                            ))
+
             # Write notebook back
             with open(notebook_path, 'w', encoding='utf-8') as f:
                 nbformat.write(notebook, f)

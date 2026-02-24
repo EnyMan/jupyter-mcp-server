@@ -5,7 +5,7 @@
 from typing import Annotated, Optional, Literal
 from typing import Any
 from pydantic import BaseModel, Field
-from jupyter_mcp_server.utils import safe_extract_outputs, normalize_cell_source
+from jupyter_mcp_server.utils import safe_extract_outputs, normalize_cell_source, CellOutput
 
 
 class DocumentRuntime(BaseModel):
@@ -37,7 +37,7 @@ class Cell(BaseModel):
         elif response_format == 'readable':
             return "\n".join([line.rstrip("\n") for line in source])
 
-    def get_outputs(self, response_format : Literal["raw",'readable']='readable'):
+    def get_outputs(self, response_format : Literal["raw",'readable']='readable') -> list[CellOutput]:
         """Get the cell output in the requested format"""
         if response_format == "raw":
             return self.outputs
