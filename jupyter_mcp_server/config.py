@@ -90,6 +90,11 @@ _config_instance: Optional[JupyterMCPConfig] = None
 # Environment variable controls whether to return actual image content or text placeholder
 ALLOW_IMG_OUTPUT: bool = _get_env_bool("ALLOW_IMG_OUTPUT", True)
 
+# Image output mode: "resource" returns lightweight ResourceLink references (default),
+# "inline" returns full base64 ImageContent (backward-compatible).
+# ALLOW_IMG_OUTPUT=false takes precedence — images become text placeholders regardless of mode.
+IMG_OUTPUT_MODE: str = os.getenv("IMG_OUTPUT_MODE", "resource").lower()
+
 def get_config() -> JupyterMCPConfig:
     """Get the singleton configuration instance."""
     global _config_instance
