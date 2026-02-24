@@ -417,13 +417,79 @@ class MCPSSEHandler(RequestHandler):
                     }
                 }
             elif method == "resources/list":
-                # List available resources - return empty list if no resources defined  
+                # List cached cell images as resources
                 logger.info("Listing resources...")
+                from jupyter_mcp_server.image_cache import get_image_cache
+                cache = get_image_cache()
+                cached_images = cache.list_images()
+                resources = []
+                for image in cached_images:
+                    resources.append({
+                        "uri": f"jupyter://images/{image.image_id}",
+                        "name": f"cell-output-{image.image_id}",
+                        "mimeType": image.mime_type,
+                    })
                 response = {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
-                        "resources": []
+                        "resources": resources
+                    }
+                }
+            elif method == "resources/read":
+                # Serve cached image data by URI
+                logger.info("Reading resource...")
+                import base64
+                from jupyter_mcp_server.image_cache import get_image_cache
+                uri = params.get("uri", "")
+                import re as _re
+                match = _re.match(r"jupyter://images/([a-f0-9]+)", uri)
+                if match:
+                    cache = get_image_cache()
+                    entry = cache.get(match.group(1))
+                    if entry:
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "contents": [{
+                                    "uri": uri,
+                                    "mimeType": entry.mime_type,
+                                    "blob": entry.data,
+                                }]
+                            }
+                        }
+                    else:
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {
+                                "code": -32602,
+                                "message": f"Image not found or expired: {uri}"
+                            }
+                        }
+                else:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32602,
+                            "message": f"Unknown resource URI: {uri}"
+                        }
+                    }
+            elif method == "resources/templates/list":
+                # Advertise the image resource URI template
+                logger.info("Listing resource templates...")
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "resourceTemplates": [{
+                            "uriTemplate": "jupyter://images/{image_id}",
+                            "name": "Cell Image Output",
+                            "description": "Cached image output from a Jupyter cell execution",
+                            "mimeType": "image/png",
+                        }]
                     }
                 }
             else:
